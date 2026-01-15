@@ -29,11 +29,23 @@
 
 ## Install
 
-Download the latest release or build from source:
+Download the [latest release](https://github.com/farouqaldori/claude-island/releases/latest) or build from source (see below).
+
+## Development
+
+**Prerequisites:** Xcode 16+ (no Apple Developer account needed)
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release build
+# One-time setup: accept Xcode license
+sudo xcodebuild -license accept
+
+# Clone and build
+git clone https://github.com/farouqaldori/claude-island.git
+cd claude-island
+scripts/dev-build.sh
 ```
+
+No code signing or Xcode login required.
 
 ## How It Works
 

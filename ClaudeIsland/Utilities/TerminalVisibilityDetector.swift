@@ -7,6 +7,7 @@
 
 import AppKit
 import CoreGraphics
+import OcclusionKit
 
 struct TerminalVisibilityDetector {
     /// Check if the frontmost (active) application is a terminal
@@ -22,65 +23,32 @@ struct TerminalVisibilityDetector {
     /// Check if a Claude session's terminal window is visible on the current space
     /// - Parameter sessionPid: The PID of the Claude process
     /// - Returns: true if the session's terminal has a visible, unobscured window on the current space
-    static func isSessionTerminalVisible(sessionPid: Int) -> Bool {
+    static func isSessionTerminalVisible(sessionPid: Int) async -> Bool {
         let tree = ProcessTreeBuilder.shared.buildTree()
 
-        // Get all on-screen windows (returned in front-to-back z-order)
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        // Get all on-screen windows using OcclusionKit
+        guard let windows = try? OcclusionKit.allWindows() else {
             return false
         }
 
         // Find the terminal window for this session and check if it's visible
-        var windowsAbove: [CGRect] = []
-
-        for window in windowList {
-            guard let ownerPid = window[kCGWindowOwnerPID as String] as? Int,
-                  let layer = window[kCGWindowLayer as String] as? Int,
-                  let boundsDict = window[kCGWindowBounds as String] as? [String: CGFloat],
-                  layer == 0 else { continue }
-
-            let bounds = CGRect(
-                x: boundsDict["X"] ?? 0,
-                y: boundsDict["Y"] ?? 0,
-                width: boundsDict["Width"] ?? 0,
-                height: boundsDict["Height"] ?? 0
-            )
+        for window in windows where window.isNormalLayer {
+            let ownerPid = Int(window.processID)
 
             // Check if this window belongs to the session's terminal
             if ProcessTreeBuilder.shared.isDescendant(targetPid: sessionPid, ofAncestor: ownerPid, tree: tree) {
-                // Found the terminal window - check if it's mostly visible
-                return !isWindowMostlyObscured(windowBounds: bounds, windowsAbove: windowsAbove)
+                // Found the terminal window - check if it's mostly visible using OcclusionKit
+                // OcclusionKit uses accurate region subtraction (no overcounting)
+                do {
+                    let isOccluded = try await OcclusionKit.isOccluded(window.id, threshold: 0.5)
+                    return !isOccluded
+                } catch {
+                    return false
+                }
             }
-
-            // Track windows we've seen (they're in front of windows we haven't seen yet)
-            windowsAbove.append(bounds)
         }
 
         return false
-    }
-
-    /// Check if a window is mostly obscured by windows above it
-    /// - Parameters:
-    ///   - windowBounds: The bounds of the window to check
-    ///   - windowsAbove: Array of bounds for windows in front of this one
-    /// - Returns: true if more than 50% of the window is covered
-    private static func isWindowMostlyObscured(windowBounds: CGRect, windowsAbove: [CGRect]) -> Bool {
-        let windowArea = windowBounds.width * windowBounds.height
-        guard windowArea > 0 else { return true }
-
-        // Calculate total overlap from windows above
-        // Note: This is a simplified calculation that may overcount if covering windows overlap each other
-        var coveredArea: CGFloat = 0
-        for aboveBounds in windowsAbove {
-            let intersection = windowBounds.intersection(aboveBounds)
-            if !intersection.isNull {
-                coveredArea += intersection.width * intersection.height
-            }
-        }
-
-        // Consider obscured if >50% covered
-        return coveredArea / windowArea > 0.5
     }
 
     /// Check if a Claude session is currently focused (user is looking at it)

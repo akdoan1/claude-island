@@ -422,13 +422,27 @@ struct NotchView: View {
         if !newPendingIds.isEmpty && viewModel.status == .closed {
             // Get the new pending sessions and check if any of their terminals are NOT visible
             let newPendingSessions = sessions.filter { newPendingIds.contains($0.stableId) }
-            let anySessionTerminalNotVisible = newPendingSessions.contains { session in
-                guard let pid = session.pid else { return true }
-                return !TerminalVisibilityDetector.isSessionTerminalVisible(sessionPid: pid)
-            }
 
-            if anySessionTerminalNotVisible {
-                viewModel.notchOpen(reason: .notification)
+            // Check visibility asynchronously
+            Task {
+                var anySessionTerminalNotVisible = false
+                for session in newPendingSessions {
+                    guard let pid = session.pid else {
+                        anySessionTerminalNotVisible = true
+                        break
+                    }
+                    let isVisible = await TerminalVisibilityDetector.isSessionTerminalVisible(sessionPid: pid)
+                    if !isVisible {
+                        anySessionTerminalNotVisible = true
+                        break
+                    }
+                }
+
+                if anySessionTerminalNotVisible {
+                    await MainActor.run {
+                        viewModel.notchOpen(reason: .notification)
+                    }
+                }
             }
         }
 
@@ -506,7 +520,7 @@ struct NotchView: View {
             guard let pid = session.pid else { return true }
 
             let shouldSuppress = mode == .whenVisible
-                ? TerminalVisibilityDetector.isSessionTerminalVisible(sessionPid: pid)
+                ? await TerminalVisibilityDetector.isSessionTerminalVisible(sessionPid: pid)
                 : await TerminalVisibilityDetector.isSessionFocused(sessionPid: pid)
 
             if !shouldSuppress { return true }
